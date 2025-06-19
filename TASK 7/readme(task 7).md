@@ -1,7 +1,7 @@
 
 ### Polynomial Class in C++ ###
 
-This project implements a Polynomial class in C++ that supports various operations such as addition, subtraction, multiplication, evaluation, and differentiation. It also provides methods to find roots using `Newton-Raphson and Bisection methods`.
+This project implements a Polynomial class in C++ that supports various operations such as addition, subtraction and multiplication.It also provides methods to find roots using `Newton-Raphson and Bisection methods`.
 
 ## Features
 
