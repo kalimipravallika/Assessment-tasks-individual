@@ -32,6 +32,12 @@ This project implements a `generic N-dimensional vector class` using C++ templat
 - Cross Product (`cross`) 
   Only applicable for **3D vectors** (`N == 3`).
 
+- Norm ('Magnitude')
+  The norm or magnitude of a vector represents its length in space.
+
+- Normalization
+  A normalized vector (also called a unit vector) is a vector that points in the same direction but has a magnitude of 1.
+ 
   ## How to run
 
 1. Go to (https://www.programiz.com/cpp-programming/online-compiler/)
