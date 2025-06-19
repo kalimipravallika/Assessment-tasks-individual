@@ -9,26 +9,32 @@ This project implements a thread pool with work stealing in C++. It manages mult
 - Task queuing with thread safety using `std::mutex`.
 - Work stealing mechanism, where idle threads take tasks from others.
 - Atomic synchronization using `std::atomic<bool>` to manage termination.
+- Efficient waiting with std::condition_variable
 - Dynamic task assignment across multiple threads.
 
 ## How It Works
 
 1. **Task Queue**
 - Stores tasks in a thread-safe queue (`std::queue<Task>`).
-- Provides `push/pop operations with locking` to prevent race conditions.
+- The queue is thread-safe using std::mutex.
+- Uses std::condition_variable to allow threads to wait efficiently for new tasks.
 
 2. **Worker Threads**
-- Each worker retrieves tasks from its own queue.
-- If no task is available, it `steals` from another queue.
-- Uses `std::this_thread::sleep_for` to avoid busy-waiting.
+- Each worker thread:
+  Waits for tasks in its own queue using cv.wait(...).
+- If no task is found and done == false, it continues waiting.
+- If the queue is empty and done == true, it exits.
+When a worker has no task:
+It attempts to steal a task from another worker’s queue using a non-blocking method.
 
 3. **Task Execution & Work Stealing**
-- Tasks are added to individual thread queues.
-- Threads execute their own tasks or steal from others.
-- Execution continues until all tasks are completed.
+- Tasks are pushed by the producer (main thread) into queues .
+- Workers consume their own tasks or steal from others.
+- All threads keep working until every queue is empty and shutdown is signaled.
 
 4. **Graceful Shutdown**
 - Uses `std::atomic<bool>` to signal when execution should stop.
+- `std::condition_variable::notify_one()` is called to wake any sleeping threads.
 - Ensures threads finish their tasks before stopping.
 
 ## How to Run 
