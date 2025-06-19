@@ -11,22 +11,25 @@
 #include <atomic>
 #include <chrono>
 
-// Define a task as a function that returns void and takes no parameters
 using Task = std::function<void()>;
 
-// Thread-safe task queue to store and manage tasks
+// Thread-safe queue with condition variable
 class TaskQueue {
-    std::queue<Task> tasks;     
-    std::mutex mtx;            // Mutex to protect the queue
+    std::queue<Task> tasks;
+    std::mutex mtx;
+    std::condition_variable cv;
 
 public:
-    // Producer pushes task into the queue
+    // Producer pushes task into the queue and notifies a waiting consumer
     void push(Task task) {
-        std::lock_guard<std::mutex> lock(mtx);
-        tasks.push(std::move(task));
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            tasks.push(std::move(task));
+        }
+        cv.notify_one();
     }
 
-    // Consumer tries to pop task from the queue
+    // Consumer tries to pop a task (non-blocking, for stealing)
     bool try_pop(Task& task) {
         std::lock_guard<std::mutex> lock(mtx);
         if (tasks.empty()) return false;
@@ -35,16 +38,23 @@ public:
         return true;
     }
 
-    // Check if the queue is empty
+    // Consumer waits for a task (blocking)
+    bool wait_pop(Task& task, std::atomic<bool>& done) {
+        std::unique_lock<std::mutex> lock(mtx);
+        cv.wait(lock, [&]() { return !tasks.empty() || done; });
+        if (tasks.empty()) return false; // woke up due to `done`
+        task = std::move(tasks.front());
+        tasks.pop();
+        return true;
+    }
+
     bool empty() {
         std::lock_guard<std::mutex> lock(mtx);
         return tasks.empty();
     }
 
-    // Get the number of tasks in the queue
-    size_t size() {
-        std::lock_guard<std::mutex> lock(mtx);
-        return tasks.size();
+    void notify() {
+        cv.notify_one();
     }
 };
 
@@ -53,22 +63,21 @@ class Worker {
     int id;
     std::vector<TaskQueue*>& queues;
     TaskQueue* ownQueue;
-    std::atomic<bool>& done;       // Shared flag to signal stopping
+    std::atomic<bool>& done;
 
 public:
     Worker(int id, std::vector<TaskQueue*>& qs, TaskQueue* own, std::atomic<bool>& done)
         : id(id), queues(qs), ownQueue(own), done(done) {}
 
-    // Worker logic: execute own tasks or steal from other queues
     void operator()() {
         Task task;
         while (!done) {
-            // Try to execute from own queue (normal consumer behavior)
-            if (ownQueue->try_pop(task)) {
+            // Try to pop task from own queue (blocking)
+            if (ownQueue->wait_pop(task, done)) {
                 std::cout << "Thread " << id << " executing task\n";
                 task();
             } else {
-                // Try to steal task from other queues
+                // Try to steal task from other queues (non-blocking)
                 bool stolen = false;
                 for (auto q : queues) {
                     if (q != ownQueue && q->try_pop(task)) {
@@ -78,11 +87,15 @@ public:
                         break;
                     }
                 }
-                // Sleep briefly to prevent busy waiting
-                if (!stolen) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                }
+                // If nothing stolen, optional brief sleep (not necessary here due to blocking wait)
+                if (!stolen)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
+        }
+
+        // Final draining in case tasks were pushed before shutdown
+        while (ownQueue->try_pop(task)) {
+            task();
         }
     }
 };
@@ -94,11 +107,11 @@ int main() {
     std::vector<TaskQueue> queue_objects(num_threads);
     std::atomic<bool> done{ false };
 
-    // Initialize task queues (one per thread)
+    // Initialize queues
     for (int i = 0; i < num_threads; ++i)
         queues.push_back(&queue_objects[i]);
 
-    // The main thread acts as the producer.
+    // Main thread acts as producer
     for (int i = 0; i < 5; ++i) {
         queues[i % num_threads]->push([i]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -106,7 +119,7 @@ int main() {
         });
     }
 
-    // Start consumer threads (workers)
+    // Start worker threads (consumers)
     for (int i = 0; i < num_threads; ++i) {
         threads.emplace_back(Worker(i, queues, queues[i], done));
     }
@@ -124,8 +137,12 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
-    // Signal consumers to stop
+    // Signal threads to stop
     done = true;
+
+    // Wake up any waiting threads
+    for (auto& q : queues)
+        q->notify();
 
     // Join all threads
     for (auto& t : threads) {
