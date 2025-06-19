@@ -1,7 +1,6 @@
 
 ///---- Advanced Thread Pool with Task Scheduling ---- ///
 
-// Include necessary libraries
 #include <iostream>
 #include <queue>
 #include <vector>
@@ -9,94 +8,93 @@
 #include <mutex>
 #include <condition_variable>
 #include <future>
-#include <map>
 #include <stdexcept>
 
-// Structure to represent a Task with ID, priority, function to run,
+// Task structure
 struct Task {
-    int id;
-    int priority;
-    std::function<void()> func;
-    std::vector<std::shared_future<void>> dependencies;
-    std::promise<void> prom;
+    int id;  
+    int priority;  
+    std::function<void()> func;  
+    std::vector<std::future<void>> dependencies;  // Futures for dependency tracking
+    std::promise<void> prom;  // Promise to signal completion (or exception)
 
-    // Get a shared future linked to this task’s promise
-    std::shared_future<void> get_future() {
-        return prom.get_future().share();
+    // Get a future from the promise
+    std::future<void> get_future() {
+        return prom.get_future();
     }
 
-    // Custom comparison for priority queue (higher number = higher priority)
+    // Define comparison: lower priority tasks go behind in priority_queue
     bool operator<(const Task& other) const {
         return priority < other.priority;
     }
 };
 
-// Class to manage and execute tasks using multiple threads
+// Scheduler class that runs tasks concurrently
 class TaskScheduler {
 private:
-    std::priority_queue<Task> taskQueue; // Queue of tasks sorted by priority
-    std::mutex mtx;
-    std::condition_variable cv;
-    bool stop = false;
-    std::vector<std::thread> workers; // Thread pool
+    std::priority_queue<Task> taskQueue; 
+    std::mutex mtx;                       
+    std::condition_variable cv;           
+    bool stop = false;                    
+    std::vector<std::thread> workers;     
 
 public:
-    // Constructor: create threads and start worker loop
+    // Constructor: launch worker threads
     TaskScheduler(size_t num_threads) {
         for (size_t i = 0; i < num_threads; ++i) {
             workers.emplace_back([this]() { this->worker_thread(); });
         }
     }
 
-    // Destructor: stops all threads safely
+    // Destructor: stop threads and join them
     ~TaskScheduler() {
         {
             std::unique_lock<std::mutex> lock(mtx);
             stop = true;
-            cv.notify_all(); // Wake up all waiting threads
+            cv.notify_all();  // Wake up all threads
         }
         for (auto& t : workers) {
-            if (t.joinable())
-                t.join(); // Wait for thread to finish
+            if (t.joinable()) t.join();
         }
     }
 
-    // Add a new task to the scheduler
+    // Add task to queue
     void add_task(Task&& task) {
         std::unique_lock<std::mutex> lock(mtx);
         taskQueue.push(std::move(task));
-        cv.notify_one(); // Notify one waiting thread
+        cv.notify_one();  // Wake up one thread
     }
 
-    // Function run by each worker thread
+    // Worker thread function
     void worker_thread() {
         while (true) {
             Task task;
-
             {
                 std::unique_lock<std::mutex> lock(mtx);
-                // Wait until there’s a task or stop is true
+                // Wait until stop or queue is not empty
                 cv.wait(lock, [&] { return stop || !taskQueue.empty(); });
 
-                // If stopping and no tasks left, exit the loop
+                // Exit thread if stopping and no tasks
                 if (stop && taskQueue.empty()) break;
 
-                // Get the highest priority task
+                // Get the highest-priority task
                 task = std::move(const_cast<Task&>(taskQueue.top()));
                 taskQueue.pop();
             }
 
             try {
-                // Wait for dependencies to finish
+                // Wait for dependencies
                 for (auto& dep : task.dependencies) {
-                    dep.wait();
+                    dep.get();  // Wait and throw if dependency failed
                 }
 
-                // Execute task
+                // Run task
                 task.func();
-                task.prom.set_value(); // Mark task as done
+
+                // Mark task as completed
+                task.prom.set_value();
             } catch (...) {
-                // If task throws, store the exception
+                // Store exception in promise
                 try {
                     task.prom.set_exception(std::current_exception());
                 } catch (...) {}
@@ -105,10 +103,11 @@ public:
     }
 };
 
+// Main function to demonstrate the scheduler
 int main() {
-    TaskScheduler scheduler(4); // Create a scheduler with 4 threads
+    TaskScheduler scheduler(4);  // Start 4 worker threads
 
-    // Task 1
+    // Task 1 (no dependencies)
     Task task1;
     task1.id = 1;
     task1.priority = 2;
@@ -117,9 +116,9 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         std::cout << "Task 1 completed\n";
     };
-    auto fut1 = task1.get_future();
+    std::future<void> fut1 = task1.get_future();  // Store future for dependency
 
-    // Task 2
+    // Task 2 (no dependencies)
     Task task2;
     task2.id = 2;
     task2.priority = 3;
@@ -128,20 +127,22 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         std::cout << "Task 2 completed\n";
     };
-    auto fut2 = task2.get_future();
+    std::future<void> fut2 = task2.get_future();  // Store future for dependency
 
-    // Task 3 depends on task 1 and 2
+    // Task 3 (depends on Task 1 and Task 2)
     Task task3;
     task3.id = 3;
     task3.priority = 1;
-    task3.dependencies = {fut1, fut2};
+    task3.dependencies.push_back(std::move(fut1));  // Add Task 1 as dependency
+    task3.dependencies.push_back(std::move(fut2));  // Add Task 2 as dependency
     task3.func = [] {
         std::cout << "Task 3 (depends on 1 and 2) started\n";
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         std::cout << "Task 3 completed\n";
     };
+    std::future<void> fut3 = task3.get_future();  // For optional waiting
 
-    // Task 4 will throw an error
+    // Task 4 (throws exception)
     Task task4;
     task4.id = 4;
     task4.priority = 4;
@@ -149,22 +150,25 @@ int main() {
         std::cout << "Task 4 (throws error)\n";
         throw std::runtime_error("Error in Task 4");
     };
-    auto fut4 = task4.get_future();
+    std::future<void> fut4 = task4.get_future();
 
-    // Submit all tasks to scheduler
+    // Submit tasks to scheduler
     scheduler.add_task(std::move(task1));
     scheduler.add_task(std::move(task2));
     scheduler.add_task(std::move(task3));
     scheduler.add_task(std::move(task4));
 
-    // Catch error from task 4, if any
+    // Handle exception from Task 4
     try {
-        fut4.get();
+        fut4.get();  // This will throw if task4 throws
     } catch (const std::exception& e) {
         std::cout << "Caught exception: " << e.what() << "\n";
     }
 
-    // Wait so all output is printed before program ends
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    // Wait for dependent task to finish (optional)
+    fut3.get();
+
+    // Sleep to allow all tasks to complete before program exits
+    std::this_thread::sleep_for(std::chrono::seconds(1));
     return 0;
 }
