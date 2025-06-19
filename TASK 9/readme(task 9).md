@@ -35,7 +35,7 @@ This project implements a `generic N-dimensional vector class` using C++ templat
 - Norm ('Magnitude')
   The norm or magnitude of a vector represents its length in space.
 
-- Normalization
+- Normalization :
   A normalized vector (also called a unit vector) is a vector that points in the same direction but has a magnitude of 1.
  
   ## How to run
