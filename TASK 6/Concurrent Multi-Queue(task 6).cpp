@@ -16,17 +16,17 @@ using Task = std::function<void()>;
 
 // Thread-safe task queue to store and manage tasks
 class TaskQueue {
-    std::queue<Task> tasks;
-    std::mutex mtx;
+    std::queue<Task> tasks;     
+    std::mutex mtx;            // Mutex to protect the queue
 
 public:
-    // Add a task to the queue
+    // Producer pushes task into the queue
     void push(Task task) {
         std::lock_guard<std::mutex> lock(mtx);
         tasks.push(std::move(task));
     }
 
-    // Try to get a task from the queue
+    // Consumer tries to pop task from the queue
     bool try_pop(Task& task) {
         std::lock_guard<std::mutex> lock(mtx);
         if (tasks.empty()) return false;
@@ -53,7 +53,7 @@ class Worker {
     int id;
     std::vector<TaskQueue*>& queues;
     TaskQueue* ownQueue;
-    std::atomic<bool>& done;
+    std::atomic<bool>& done;       // Shared flag to signal stopping
 
 public:
     Worker(int id, std::vector<TaskQueue*>& qs, TaskQueue* own, std::atomic<bool>& done)
@@ -63,6 +63,7 @@ public:
     void operator()() {
         Task task;
         while (!done) {
+            // Try to execute from own queue (normal consumer behavior)
             if (ownQueue->try_pop(task)) {
                 std::cout << "Thread " << id << " executing task\n";
                 task();
@@ -93,11 +94,11 @@ int main() {
     std::vector<TaskQueue> queue_objects(num_threads);
     std::atomic<bool> done{ false };
 
-    // Link each queue object with a pointer
+    // Initialize task queues (one per thread)
     for (int i = 0; i < num_threads; ++i)
         queues.push_back(&queue_objects[i]);
 
-    // Add 5 sample tasks across threads
+    // The main thread acts as the producer.
     for (int i = 0; i < 5; ++i) {
         queues[i % num_threads]->push([i]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -105,7 +106,7 @@ int main() {
         });
     }
 
-    // Start all worker threads
+    // Start consumer threads (workers)
     for (int i = 0; i < num_threads; ++i) {
         threads.emplace_back(Worker(i, queues, queues[i], done));
     }
@@ -123,7 +124,7 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
-    // Signal threads to stop
+    // Signal consumers to stop
     done = true;
 
     // Join all threads
