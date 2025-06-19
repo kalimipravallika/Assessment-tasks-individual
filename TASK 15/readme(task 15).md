@@ -42,8 +42,8 @@ Dataset: 45 20 9 24 16
 
 Mean: 22.8
 Median: 20
-Variance: 173.36
-Standard Deviation: 13.1722
+Variance: 147.76
+Standard Deviation: 12.1557
 
 
 
